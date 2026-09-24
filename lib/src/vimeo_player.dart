@@ -1,0 +1,327 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:vimeo_flutter/web/web_listener_web.dart'
+    if (dart.library.io) 'package:vimeo_flutter/mobile/web_listener_stub.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+
+/// Vimeo video player with customizable controls and event callbacks using the InAppWebView
+class VimeoVideoPlayer extends StatefulWidget {
+  /// Defines the vimeo video ID to be played
+  ///
+  /// [videoId] is required and cannot be empty
+  final String videoId;
+
+  /// Used to auto-play the video once initialized
+  ///
+  /// Default value: [false]
+  final bool isAutoPlay;
+
+  /// Used to play the video in a loop after it ends
+  ///
+  /// Default value: [false]
+  final bool isLooping;
+
+  /// Used to play the video with the sound muted
+  ///
+  /// Default value: [false]
+  final bool isMuted;
+
+  /// Used to display the video title
+  ///
+  /// Default value: [false]
+  final bool showTitle;
+
+  /// Used to display the video byline/author
+  ///
+  /// Default value: [false]
+  final bool showByline;
+
+  /// Used to display the video playback controls
+  ///
+  /// Default value: [true]
+  final bool showControls;
+
+  /// Used to enable Do Not Track (DNT) mode
+  /// When enabled, the player will not track any viewing information
+  ///
+  /// Default value: [true]
+  final bool enableDNT;
+
+  /// Defines the hash for the unlisted vimeo video
+  /// [privacyHash] is needed only for unlisted video.
+  final String? privacyHash;
+
+  /// Used to display the profile avatar
+  ///
+  /// Default value: [false]
+  final bool portrait;
+
+  /// Used to display the vimeo logo
+  ///
+  /// Default value: [false]
+  final bool badge;
+
+  /// Used to enable fullscreen mode when playing
+  /// When enabled, the player go full screen when play is hit
+  ///
+  /// Default value: [false]
+  final bool enableFullScreenOnPlay;
+
+  /// Defines the background color of the InAppWebView
+  ///
+  /// Default Value: [Colors.black]
+  final Color backgroundColor;
+
+  /// Defines a callback function triggered when the player is ready to play the video
+  final VoidCallback? onReady;
+
+  /// Defines a callback function triggered when the video begins playing
+  final VoidCallback? onPlay;
+
+  /// Defines a callback function triggered when the video is paused
+  final VoidCallback? onPause;
+
+  /// Defines a callback function triggered when the video playback finishes
+  final VoidCallback? onFinish;
+
+  /// Defines a callback function triggered when the video playback position is modified
+  final VoidCallback? onSeek;
+
+  /// Defines a callback function triggered when the WebView is created
+  final Function(WebViewController controller)? onInAppWebViewCreated;
+
+  /// Defines a callback function triggered when the WebView starts to load an url
+  final Function(WebViewController controller, String? url)?
+  onInAppWebViewLoadStart;
+
+  /// Defines a callback function triggered when the WebView finishes loading an url
+  final Function(WebViewController controller, String? url)?
+  onInAppWebViewLoadStop;
+
+  /// Defines a callback function triggered when the WebView encounters an error loading a request
+  final Function(WebViewController controller, WebResourceError error)?
+  onInAppWebViewReceivedError;
+
+  /// Defines a callback function triggered when the WebView enters full screen
+  final void Function(WebViewController controller)? onEnterFullscreen;
+
+  /// Defines a callback function triggered when the WebView exits full screen
+  final void Function(WebViewController controller)? onExitFullscreen;
+
+  /// Defines a callback function that notifies current video position
+  final ValueChanged<double>? currentPositionInSeconds;
+
+  /// Defines the initial video position in seconds
+  final int? initialPositionInSeconds;
+
+  VimeoVideoPlayer({
+    super.key,
+    required this.videoId,
+    this.isAutoPlay = false,
+    this.isLooping = false,
+    this.isMuted = false,
+    this.showTitle = false,
+    this.showByline = false,
+    this.showControls = true,
+    this.enableDNT = true,
+    this.privacyHash,
+    this.portrait = false,
+    this.badge = false,
+    this.enableFullScreenOnPlay = false,
+    this.backgroundColor = Colors.black,
+    this.onReady,
+    this.onPlay,
+    this.onPause,
+    this.onFinish,
+    this.onSeek,
+    this.onInAppWebViewCreated,
+    this.onInAppWebViewLoadStart,
+    this.onInAppWebViewLoadStop,
+    this.onInAppWebViewReceivedError,
+    this.onEnterFullscreen,
+    this.onExitFullscreen,
+    this.currentPositionInSeconds,
+    this.initialPositionInSeconds,
+  }) : assert(videoId.isNotEmpty, 'videoId cannot be empty!');
+
+  @override
+  State<VimeoVideoPlayer> createState() => _VimeoVideoPlayerState();
+}
+
+class _VimeoVideoPlayerState extends State<VimeoVideoPlayer> {
+  late final WebViewController _webViewController;
+
+  @override
+  void initState() {
+    super.initState();
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'VimeoEvent',
+        onMessageReceived: (message) {
+          _manageVimeoPlayerEvent(message.message);
+        },
+      )
+      ..setBackgroundColor(widget.backgroundColor)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            widget.onInAppWebViewLoadStart?.call(_webViewController, url);
+          },
+          onPageFinished: (url) {
+            widget.onInAppWebViewLoadStop?.call(_webViewController, url);
+          },
+          onWebResourceError: (error) {
+            widget.onInAppWebViewReceivedError?.call(_webViewController, error);
+          },
+        ),
+      )
+      ..loadHtmlString(
+        _buildHtmlContent(),
+        baseUrl: 'https://player.vimeo.com',
+      );
+    setupWebListener((event) {
+      _manageVimeoPlayerEvent(event);
+    });
+    widget.onInAppWebViewCreated?.call(_webViewController);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WebViewWidget(controller: _webViewController);
+  }
+
+  /// Builds the HTML content for the vimeo player
+  String _buildHtmlContent() {
+    return '''
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <style>
+          body {
+            margin: 0;
+            padding: 0;
+            background-color: ${_colorToHex(widget.backgroundColor)};
+          }
+          .video-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+          }
+          iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+          }
+        </style>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+      <script src="https://player.vimeo.com/api/player.js"></script>
+    </head>
+    <body>
+      <iframe id="vimeoPlayer" src="${_buildIframeUrl()}" 
+      frameborder="0" allow="autoplay; fullscreen; picture-in-picture"allowfullscreen 
+            webkitallowfullscreen 
+            mozallowfullscreen>
+      </iframe>
+
+      <script>
+        var iframe = document.getElementById('vimeoPlayer');
+        var player = new Vimeo.Player(iframe);
+
+        function sendEventToFlutter(eventName) {
+          if (window.VimeoEvent) {
+            VimeoEvent.postMessage(eventName);
+          } else {
+            window.parent.postMessage({ vimeoEvent: eventName }, "*");
+          }
+        }
+
+        player.on('play', function() { sendEventToFlutter('onPlay'); });
+        player.on('pause', function() { sendEventToFlutter('onPause'); });
+        player.on('loaded', function() { 
+          sendEventToFlutter('onReady');
+          if (${widget.initialPositionInSeconds != null}) {
+            player.setCurrentTime(${widget.initialPositionInSeconds});
+          }
+        });
+        player.on('seeked', function() { sendEventToFlutter('onSeek'); });
+        player.on('ended', function() { sendEventToFlutter('onFinish'); });
+        player.on('timeupdate', function(data) {
+          sendEventToFlutter('currentPosition:' + data.seconds);
+        });
+        document.addEventListener('fullscreenchange', function() {
+          sendEventToFlutter(document.fullscreenElement ? 'onEnterFullscreen' : 'onExitFullscreen');
+        });
+      </script>
+    </body>
+    </html>
+    ''';
+  }
+
+  /// Builds the iframe URL
+  String _buildIframeUrl() {
+    return 'https://player.vimeo.com/video/${widget.videoId}?'
+        'autoplay=${widget.isAutoPlay.toFlag()}'
+        '&loop=${widget.isLooping.toFlag()}'
+        '&muted=${widget.isMuted.toFlag()}'
+        '&byline=${widget.showByline.toFlag()}'
+        '&controls=${widget.showControls.toFlag()}'
+        '&dnt=${widget.enableDNT.toFlag()}'
+        '${widget.privacyHash != null ? '&h=${widget.privacyHash}' : ''}'
+        '&portrait=${widget.portrait.toFlag()}'
+        '&badge=${(!widget.badge).toFlag()}'
+        '&playsinline=${(!widget.enableFullScreenOnPlay).toFlag()}';
+  }
+
+  /// Manage vimeo player events received from the WebView
+  void _manageVimeoPlayerEvent(String event) {
+    if (widget.currentPositionInSeconds != null &&
+        event.contains("currentPosition")) {
+      final position = event.split(":").last.trim();
+      widget.currentPositionInSeconds?.call(double.tryParse(position) ?? 0);
+    }
+    switch (event) {
+      case 'onReady':
+        widget.onReady?.call();
+        break;
+      case 'onPlay':
+        widget.onPlay?.call();
+        break;
+      case 'onPause':
+        widget.onPause?.call();
+        break;
+      case 'onFinish':
+        widget.onFinish?.call();
+        break;
+      case 'onSeek':
+        widget.onSeek?.call();
+        break;
+      case 'onEnterFullscreen':
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeRight,
+          DeviceOrientation.landscapeLeft,
+        ]);
+        widget.onEnterFullscreen?.call(_webViewController);
+        break;
+      case 'onExitFullscreen':
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+        widget.onExitFullscreen?.call(_webViewController);
+        break;
+    }
+  }
+
+  /// Converts Color to a hexadecimal string
+  String _colorToHex(Color color) {
+    final hex = color.toARGB32().toRadixString(16).padLeft(8, '0');
+    return '#${hex.substring(2)}'; // Remove the leading 'ff' for opacity
+  }
+}
+
+extension BoolToFlag on bool {
+  String toFlag() => this ? "1" : "0";
+}
